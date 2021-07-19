@@ -1,7 +1,7 @@
 # captureScreen
 
 [![forthebadge](https://forthebadge.com/images/badges/made-with-go.svg)](https://forthebadge.com)
-
+[![forthebadge](https://forthebadge.com/images/badges/powered-by-coffee.svg)](https://forthebadge.com)
 >A simple screen recorder written in (pure) Go.
 
 ### Technical description
