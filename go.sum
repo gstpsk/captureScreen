@@ -1,3 +1,5 @@
+github.com/gonutz/d3d9 v1.2.1 h1:xcQLMKrAf+/hvFtsyc9LuLJ+qs6TPtbzuKYONRERpYo=
+github.com/gonutz/d3d9 v1.2.1/go.mod h1:q74g3QbR280b+qYauwEV0N9SVadszWPLZ4l/wHiD/AA=
 github.com/icza/mjpeg v0.0.0-20201020132628-7c1e1838a393 h1:x6a1h0jKsDMgUqyy0RO2dXOciHY+QWqcZ2Tvb5LStxA=
 github.com/icza/mjpeg v0.0.0-20201020132628-7c1e1838a393/go.mod h1:Eja3x31oRrEOzl6ihhsxY23gXaTYWLP3Gwj5nMAJ7m0=
 github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 h1:zYyBkD/k9seD2A7fsi6Oo2LfFZAehjjQMERAvZLEDnQ=
