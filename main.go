@@ -8,6 +8,7 @@ import (
 	"github.com/nfnt/resize"
 	"image"
 	"image/jpeg"
+	"sync"
 	"time"
 )
 
@@ -15,9 +16,10 @@ var jpgBuff = make(map[int][]byte)
 var fps int = 15
 
 func main() {
-	go task(10)
-
-	time.Sleep(time.Second * 11)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go task(10, wg)
+	wg.Wait()
 
 	fmt.Println("Attempting to create video file...")
 
@@ -26,7 +28,6 @@ func main() {
 		fmt.Println("Failed to create file.")
 	}
 
-
 	for i := 0; i < len(jpgBuff); i++ {
 		aw.AddFrame(jpgBuff[i])
 		fmt.Printf("Added frame %d to file.\n", i)
@@ -34,10 +35,11 @@ func main() {
 	aw.Close()
 }
 
-func task(dur int) {
+func task(dur int, wg *sync.WaitGroup) {
+	defer wg.Done()
 	var i int
 	fpsDuration := time.Duration(fps)
-	for range time.Tick(time.Second / fpsDuration){
+	for range time.Tick(time.Second / fpsDuration) {
 		i++
 		// Capture the screen
 		img, err := screenshot.CaptureScreen()
@@ -47,20 +49,21 @@ func task(dur int) {
 		fmt.Printf("Grabbed frame %d!\n", i)
 		// Add image to buffer
 		var jpgBytes []byte
-		if i % 15 == 0 {
+		if i%15 == 0 {
 			jpgBytes = Encode(img, true)
 		} else {
 			jpgBytes = Encode(img, false)
 		}
 		jpgBuff[i] = jpgBytes
 		// Check if required time has been reached
-		if i / fps >= dur {
-			fmt.Printf("%d seconds have passed, Quitting..\n", i / fps)
+		if i/fps >= dur {
+			fmt.Printf("%d seconds have passed, Quitting..\n", i/fps)
 			break
 		}
 	}
 }
 
+// Encodes the image using jpeg to make mem happy :)
 func Encode(img image.Image, hq bool) []byte {
 	if false {
 		img = resize.Resize(640, 480, img, resize.Bilinear)
