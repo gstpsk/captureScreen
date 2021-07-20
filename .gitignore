@@ -1,3 +1,5 @@
 *.avi
 *.png
 *.exe
+*.264
+/resources

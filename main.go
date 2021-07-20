@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"captureScreen/screenshot"
 	"fmt"
+	"github.com/gen2brain/x264-go"
 	"github.com/gonutz/d3d9"
-	"github.com/icza/mjpeg"
 	"github.com/nfnt/resize"
 	"image"
 	"image/jpeg"
+	"io/ioutil"
 	"sync"
 	"time"
 	"unsafe"
@@ -24,7 +26,10 @@ func main() {
 	var finish = false
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
-	go Record(fps, timespan, &finish, wg)
+	var data []byte
+	go func() {
+		data = Record(fps, &finish, wg)
+	}()
 	fmt.Print("Press enter to stop recording...")
 	fmt.Scanln()
 	finish = true
@@ -32,17 +37,10 @@ func main() {
 
 	fmt.Println("Attempting to create video file...")
 
-	aw, err := mjpeg.New("test.avi", 1920, 1080, int32(fps))
-	if err != nil {
-		fmt.Println("Failed to create file.")
-	}
+	err := ioutil.WriteFile("test.264", data, 0644)
+	check(err)
 
-	for i := 0; i < len(imgBuff); i++ {
-		frm := Encode(imgBuff[i], false, 80)
-		aw.AddFrame(frm)
-		fmt.Printf("Added frame %d to file.\n", i)
-	}
-	aw.Close()
+	//exec.Cmd{Path: }
 }
 
 /*func task(dur int, wg *sync.WaitGroup) {
@@ -73,55 +71,88 @@ func main() {
 	}
 }
 */
-func Record(fps int, timespan int, finish *bool, wg *sync.WaitGroup) {
+func Record(fps int, finish *bool, wg *sync.WaitGroup) []byte {
 	defer wg.Done()
+	fmt.Println("Initiating recording...")
 	var i int = 1
+	captureGroup := new(sync.WaitGroup)
 	fpsDuration := time.Duration(fps)
-	mode, device, surface := InitD3D9()
+	rect, err := screenshot.ScreenRect()
+	check(err)
+
+	// Initialize buffer
+	buf := bytes.NewBuffer(make([]byte, 0))
+
+	// Initialize h264 encoder
+	opts := &x264.Options{
+		Width:     rect.Dx(),
+		Height:    rect.Dy(),
+		FrameRate: fps,
+		Tune:      "zerolatency",
+		Preset:    "ultrafast",
+		Profile:   "baseline",
+		LogLevel:  x264.LogDebug,
+	}
+	enc, err := x264.NewEncoder(buf, opts)
+	defer enc.Close()
+	check(err)
+
+	// Start recording
 	for range time.Tick(time.Second / fpsDuration) {
-		// Capture the screen
-		img := CaptureScreen(mode, device, &surface)
-		if false {
-			fmt.Println("Failed to capture screen.")
-			break
-		}
-		//fmt.Printf("Grabbed frame %d!\n", i/fps)
-		// Encode image with JPEG
-		//jpgBytes := Encode(img, false, 20)
-		if len(imgBuff) >= timespan*fps {
-			imgBuff = imgBuff[1:len(imgBuff)]
-			imgBuff = append(imgBuff, img)
-		} else {
-			// Add encoded image to the buffer
-			imgBuff = append(imgBuff, img)
-		}
+		captureGroup.Add(1)
+		fmt.Printf("Grabbing frame %d took ", i)
+		go Capture(rect, captureGroup, enc)
+		captureGroup.Wait()
 		i++
 		if *finish {
 			break
 		}
-		/*
-
-			if len(jpgBuff) >= timespan * fps {
-				jpgBuff = jpgBuff[1:len(jpgBuff)]
-				jpgBuff = append(jpgBuff, jpgBytes)
-			} else {
-				// Add encoded image to the buffer
-				jpgBuff = append(jpgBuff, jpgBytes)
-			}
-
-		*/
 	}
 
+	// Return buffer
+	enc.Flush()
+	return buf.Bytes()
 }
 
-func CaptureScreen(mode d3d9.DISPLAYMODE, device d3d9.Device, surface *d3d9.Surface) image.Image {
+func Capture(rect image.Rectangle, cg *sync.WaitGroup, enc *x264.Encoder) {
+	// Capture the screen
+	defer cg.Done()
 	startTime := time.Now()
+	img, err := screenshot.CaptureRect(rect)
+	fmt.Printf("%dms\n", time.Since(startTime).Milliseconds())
+	check(err)
 
-	device.GetFrontBufferData(0, surface)
+	err = enc.Encode(img)
+	check(err)
 
-	r, _ := surface.LockRect(nil, 0)
+	/*if len(imgBuff) >= timespan*fps {
+		imgBuff = imgBuff[1:len(imgBuff)]
+		imgBuff = append(imgBuff, img)
+	} else {
+		// Add encoded image to the buffer
+		imgBuff = append(imgBuff, img)
+	}*/
+}
+
+func CaptureScreen(mode d3d9.DISPLAYMODE, device *d3d9.Device) image.Image {
+	startTime := time.Now()
+	// Create offscreen plain surface
+	surface, _ := device.CreateOffscreenPlainSurface(
+		uint(mode.Width),
+		uint(mode.Height),
+		d3d9.FMT_A8R8G8B8,
+		d3d9.POOL_SYSTEMMEM,
+		0,
+	)
+	defer surface.Release()
+	//fmt.Println("Trying to get front buffer data...")
+	err := device.GetFrontBufferData(0, surface)
+	check(err)
+	//fmt.Println("Got front buffer data")
+	r, err := surface.LockRect(nil, 0)
+	check(err)
 	defer surface.UnlockRect()
-
+	//fmt.Println("Locked rectangle")
 	if r.Pitch != int32(mode.Width*4) {
 		panic("Weird ass padding bruh")
 	}
@@ -140,7 +171,7 @@ func CaptureScreen(mode d3d9.DISPLAYMODE, device d3d9.Device, surface *d3d9.Surf
 	return img
 }
 
-func InitD3D9() (d3d9.DISPLAYMODE, d3d9.Device, d3d9.Surface) {
+func InitD3D9() (d3d9.DISPLAYMODE, *d3d9.Device) {
 	d3d, err := d3d9.Create(d3d9.SDK_VERSION)
 	//defer d3d.Release()
 	if err != nil {
@@ -154,7 +185,7 @@ func InitD3D9() (d3d9.DISPLAYMODE, d3d9.Device, d3d9.Surface) {
 	}
 
 	// Create device
-	device, _, err := d3d.CreateDevice(
+	device, _, _ := d3d.CreateDevice(
 		d3d9.ADAPTER_DEFAULT,
 		d3d9.DEVTYPE_HAL,
 		0,
@@ -169,17 +200,7 @@ func InitD3D9() (d3d9.DISPLAYMODE, d3d9.Device, d3d9.Surface) {
 	)
 	//defer device.Release()
 
-	// Create offscreen plain surface
-	surface, err := device.CreateOffscreenPlainSurface(
-		uint(mode.Width),
-		uint(mode.Height),
-		d3d9.FMT_A8R8G8B8,
-		d3d9.POOL_SYSTEMMEM,
-		0,
-	)
-	//defer surface.Release()
-
-	return mode, *device, *surface
+	return mode, device
 }
 
 // Encode the image using jpeg to make mem happy :)
@@ -192,4 +213,11 @@ func Encode(img image.Image, hq bool, q int) []byte {
 	buf := new(bytes.Buffer)
 	jpeg.Encode(buf, img, &o)
 	return buf.Bytes()
+}
+
+func check(err error) {
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
 }

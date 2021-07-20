@@ -9,6 +9,7 @@ import (
 )
 
 func ScreenRect() (image.Rectangle, error) {
+	// Get device context of whole screen
 	hDC := GetDC(0)
 	if hDC == 0 {
 		return image.Rectangle{}, fmt.Errorf("Could not Get primary display err:%d\n", GetLastError())
@@ -19,49 +20,50 @@ func ScreenRect() (image.Rectangle, error) {
 	return image.Rect(0, 0, x, y), nil
 }
 
-func CaptureScreen() (*image.RGBA, error) {
-	r, e := ScreenRect()
-	if e != nil {
-		return nil, e
-	}
-	return CaptureRect(r)
-}
-
 func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
-	hDC := GetDC(0)
-	if hDC == 0 {
+	// Get device context of whole screen
+	// Source
+	hdcSrc := GetDC(0)
+	if hdcSrc == 0 {
 		return nil, fmt.Errorf("Could not Get primary display err:%d.\n", GetLastError())
 	}
-	defer ReleaseDC(0, hDC)
+	defer ReleaseDC(0, hdcSrc)
 
-	m_hDC := CreateCompatibleDC(hDC)
-	if m_hDC == 0 {
+	// Create compatible device context
+	// Destination
+	hdcDst := CreateCompatibleDC(hdcSrc)
+	if hdcDst == 0 {
 		return nil, fmt.Errorf("Could not Create Compatible DC err:%d.\n", GetLastError())
 	}
-	defer DeleteDC(m_hDC)
+	defer DeleteDC(hdcDst)
 
+	// Get width and hight
 	x, y := rect.Dx(), rect.Dy()
 
-	bt := BITMAPINFO{}
-	bt.BmiHeader.BiSize = uint32(reflect.TypeOf(bt.BmiHeader).Size())
-	bt.BmiHeader.BiWidth = int32(x)
-	bt.BmiHeader.BiHeight = int32(-y)
-	bt.BmiHeader.BiPlanes = 1
-	bt.BmiHeader.BiBitCount = 32
-	bt.BmiHeader.BiCompression = BI_RGB
+	// Initialize bitmap
+	pbmi := BITMAPINFO{}
+	pbmi.BmiHeader.BiSize = uint32(reflect.TypeOf(pbmi.BmiHeader).Size())
+	pbmi.BmiHeader.BiWidth = int32(x)
+	pbmi.BmiHeader.BiHeight = int32(-y)
+	pbmi.BmiHeader.BiPlanes = 1
+	pbmi.BmiHeader.BiBitCount = 32
+	pbmi.BmiHeader.BiCompression = BI_RGB
 
-	ptr := unsafe.Pointer(uintptr(0))
+	// Create pointer to store bits in
+	ppvBits := unsafe.Pointer(uintptr(0))
 
-	m_hBmp := CreateDIBSection(m_hDC, &bt, DIB_RGB_COLORS, &ptr, 0, 0)
-	if m_hBmp == 0 {
+	// Create compatible bitmap
+	hBitmap := CreateDIBSection(hdcDst, &pbmi, DIB_RGB_COLORS, &ppvBits, 0, 0)
+	if hBitmap == 0 {
 		return nil, fmt.Errorf("Could not Create DIB Section err:%d.\n", GetLastError())
 	}
-	if m_hBmp == InvalidParameter {
+	if hBitmap == InvalidParameter {
 		return nil, fmt.Errorf("One or more of the input parameters is invalid while calling CreateDIBSection.\n")
 	}
-	defer DeleteObject(HGDIOBJ(m_hBmp))
+	defer DeleteObject(HGDIOBJ(hBitmap))
 
-	obj := SelectObject(m_hDC, HGDIOBJ(m_hBmp))
+	// Select object into device context
+	obj := SelectObject(hdcDst, HGDIOBJ(hBitmap))
 	if obj == 0 {
 		return nil, fmt.Errorf("error occurred and the selected object is not a region err:%d.\n", GetLastError())
 	}
@@ -70,16 +72,19 @@ func CaptureRect(rect image.Rectangle) (*image.RGBA, error) {
 	}
 	defer DeleteObject(obj)
 
-	if !BitBlt(m_hDC, 0, 0, x, y, hDC, rect.Min.X, rect.Min.Y, SRCCOPY) {
+	// Perform bit-block transfer from source to destination context
+	if !BitBlt(hdcDst, 0, 0, x, y, hdcSrc, rect.Min.X, rect.Min.Y, SRCCOPY) {
 		return nil, fmt.Errorf("BitBlt failed err:%d.\n", GetLastError())
 	}
 
+	// Initialise slice with ppvBits as data
 	var slice []byte
 	hdrp := (*reflect.SliceHeader)(unsafe.Pointer(&slice))
-	hdrp.Data = uintptr(ptr)
+	hdrp.Data = uintptr(ppvBits)
 	hdrp.Len = x * y * 4
 	hdrp.Cap = x * y * 4
 
+	// Make byte array with length of slice
 	imageBytes := make([]byte, len(slice))
 
 	for i := 0; i < len(imageBytes); i += 4 {
