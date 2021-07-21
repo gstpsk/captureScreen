@@ -1,10 +1,13 @@
 package main
 
+import "C"
 import (
 	"bytes"
 	"captureScreen/screenshot"
 	"fmt"
 	"github.com/gen2brain/x264-go"
+	_ "github.com/gen2brain/x264-go/x264c"
+	"github.com/glycerine/rbuf"
 	"github.com/gonutz/d3d9"
 	"github.com/nfnt/resize"
 	"image"
@@ -15,7 +18,7 @@ import (
 	"unsafe"
 )
 
-const fps int = 60
+const fps int = 35
 const timespan int = 10
 
 var imgBuff []image.Image
@@ -35,53 +38,27 @@ func main() {
 	finish = true
 	wg.Wait()
 
-	fmt.Println("Attempting to create video file...")
+	fmt.Print("Attempting to create video file...")
 
 	err := ioutil.WriteFile("test.264", data, 0644)
 	check(err)
 
+	fmt.Println("Done!")
 	//exec.Cmd{Path: }
+	// resources\ffmpeg.exe -f h264 -i test.264 -c:v copy test.mp4 -y
 }
 
-/*func task(dur int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	var i int
-	fpsDuration := time.Duration(fps)
-	for range time.Tick(time.Second / fpsDuration) {
-		i++
-		// Capture the screen
-		img, err := screenshot.CaptureScreen()
-		if err != nil {
-			fmt.Println("Failed to capture screen.")
-		}
-		fmt.Printf("Grabbed frame %d!\n", i)
-		// Add image to buffer
-		var jpgBytes []byte
-		if i%15 == 0 {
-			jpgBytes = Encode(img, true, 80)
-		} else {
-			jpgBytes = Encode(img, false, 80)
-		}
-		jpgBuff[i] = jpgBytes
-		// Check if required time has been reached
-		if i/fps >= dur {
-			fmt.Printf("%d seconds have passed, Quitting..\n", i/fps)
-			break
-		}
-	}
-}
-*/
 func Record(fps int, finish *bool, wg *sync.WaitGroup) []byte {
 	defer wg.Done()
 	fmt.Println("Initiating recording...")
 	var i int = 1
 	captureGroup := new(sync.WaitGroup)
-	fpsDuration := time.Duration(fps)
 	rect, err := screenshot.ScreenRect()
 	check(err)
 
 	// Initialize buffer
-	buf := bytes.NewBuffer(make([]byte, 0))
+	//buf := bytes.NewBuffer(make([]byte, 0))
+	buf2 := rbuf.NewFixedSizeRingBuf(50 * 1000 * 1000)
 
 	// Initialize h264 encoder
 	opts := &x264.Options{
@@ -91,17 +68,22 @@ func Record(fps int, finish *bool, wg *sync.WaitGroup) []byte {
 		Tune:      "zerolatency",
 		Preset:    "ultrafast",
 		Profile:   "baseline",
-		LogLevel:  x264.LogDebug,
+		LogLevel:  x264.LogInfo,
 	}
-	enc, err := x264.NewEncoder(buf, opts)
+	enc, err := x264.NewEncoder(buf2, opts)
+
 	defer enc.Close()
 	check(err)
 
+	// Initialize d3d9
+	mode, device := InitD3D9()
+
 	// Start recording
-	for range time.Tick(time.Second / fpsDuration) {
+	ticker := time.NewTicker(time.Second / time.Duration(fps))
+	for range ticker.C {
 		captureGroup.Add(1)
 		fmt.Printf("Grabbing frame %d took ", i)
-		go Capture(rect, captureGroup, enc)
+		go d3d9Capture(mode, device, captureGroup, enc)
 		captureGroup.Wait()
 		i++
 		if *finish {
@@ -111,7 +93,7 @@ func Record(fps int, finish *bool, wg *sync.WaitGroup) []byte {
 
 	// Return buffer
 	enc.Flush()
-	return buf.Bytes()
+	return buf2.Bytes()
 }
 
 func Capture(rect image.Rectangle, cg *sync.WaitGroup, enc *x264.Encoder) {
@@ -123,19 +105,22 @@ func Capture(rect image.Rectangle, cg *sync.WaitGroup, enc *x264.Encoder) {
 	check(err)
 
 	err = enc.Encode(img)
-	check(err)
 
-	/*if len(imgBuff) >= timespan*fps {
-		imgBuff = imgBuff[1:len(imgBuff)]
-		imgBuff = append(imgBuff, img)
-	} else {
-		// Add encoded image to the buffer
-		imgBuff = append(imgBuff, img)
-	}*/
+	check(err)
 }
 
-func CaptureScreen(mode d3d9.DISPLAYMODE, device *d3d9.Device) image.Image {
+func d3d9Capture(mode d3d9.DISPLAYMODE, device *d3d9.Device, cg *sync.WaitGroup, enc *x264.Encoder) {
+	// Capture the screen
+	defer cg.Done()
 	startTime := time.Now()
+	img := d3d9Screenshot(mode, device)
+	fmt.Printf("%dms\n", time.Since(startTime).Milliseconds())
+
+	err := enc.Encode(img)
+	check(err)
+}
+
+func d3d9Screenshot(mode d3d9.DISPLAYMODE, device *d3d9.Device) image.Image {
 	// Create offscreen plain surface
 	surface, _ := device.CreateOffscreenPlainSurface(
 		uint(mode.Width),
@@ -167,7 +152,6 @@ func CaptureScreen(mode d3d9.DISPLAYMODE, device *d3d9.Device) image.Image {
 	for i := 0; i < len(img.Pix); i += 4 {
 		img.Pix[i+0], img.Pix[i+2] = img.Pix[i+2], img.Pix[i+0]
 	}
-	fmt.Printf("Took %d miliseconds to execute\n", time.Since(startTime).Milliseconds())
 	return img
 }
 
