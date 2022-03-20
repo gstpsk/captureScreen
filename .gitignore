@@ -3,3 +3,6 @@
 *.exe
 *.264
 /resources
+test.go
+test2.go
+/.idea
